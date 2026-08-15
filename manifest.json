@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.deoxizn.bardisplay",
+  "name": "BarDisplay",
+  "version": "1.0.0",
+  "author": "Deoxizn",
+  "license": "MIT",
+  "description": "Show or hide the bar per display. Lists every monitor with a toggle.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "qml/Panel.qml",
+    "service": "qml/Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Bar display",
+    "description": "Toggle the bar on each monitor",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}
