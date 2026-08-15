@@ -57,3 +57,20 @@ rm -rf ~/.config/omarchy/plugins/dev.deoxizn.bardisplay
 Remove the widget from `bar.layout` in `shell.json`, and if you want to revert
 the bar itself, restore the backup the support script keeps next to the patched
 file (`Bar.qml.bardisplay.bak`).
+
+## Known issues
+
+- A one-time shell crash after the first install is a quickshell-git bug, not a
+  BarDisplay problem. `Quickshell.reload` tears the IPC handler registry down in
+  a way that can use-after-free (`IpcHandler::updateRegistration`, `FileView`)
+  when a new engine generation is created — the reason Omarchy ships with
+  Quickshell's own reloading disabled and reloads at the plugin level instead.
+  BarDisplay used to call `Quickshell.reload(false)` to make the patched bar
+  pick up its support; that reload was what crashed, so it has been removed in
+  favor of Omarchy's plugin watcher, which re-creates user-owned bars the moment
+  the patch writes their QML.
+- The bar patch is applied at shell startup from values computed fresh from the
+  loaded manifests. Relying on QML bindings that read nested members of a
+  `property var` (like `manifest.__sourceDir`) reads stale inside the host's
+  change handlers and silently skips the patch; `sourceDirFor()` /
+  `activeBarFileFor()` / `supportScriptFor()` avoid that.

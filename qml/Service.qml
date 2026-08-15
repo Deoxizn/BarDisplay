@@ -10,8 +10,12 @@ import Quickshell.Io
 // The bar plugins themselves have no per-display toggle, so this service also
 // runs scripts/ensure-bar-support.sh against the active bar's QML: idempotent,
 // backed up, and self-healing after an update replaces the file (which wipes
-// any previous support). When the support patch had to be applied the shell is
-// reloaded once so the bar picks it up.
+// any previous support). User-owned bars live under ~/.config/omarchy/plugins,
+// so Omarchy's plugin watcher re-creates the bar automatically when the patch
+// writes its QML — the bar picks the support up with no shell reload needed.
+// (Quickshell.reload(false) is deliberately avoided: on quickshell-git it tears
+// down the IPC handler registry in a way that can use-after-free and crash the
+// shell.)
 Item {
   id: root
 
@@ -27,6 +31,30 @@ Item {
   readonly property string sourceDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir || "") : ""
   readonly property string supportScript: sourceDir + "/scripts/ensure-bar-support.sh"
+
+  // The host wires `shell`, `manifest`, ... synchronously right after the
+  // component is created, and QML defers re-evaluating bindings that read
+  // nested members of a `property var` (like `manifest.__sourceDir`) until
+  // after those change handlers run. So the readonly bindings above can read
+  // stale ("") inside onShellChanged/onManifestChanged/ensureSupport and make
+  // the self-heal bail before it ever patches the bar. Compute the values
+  // fresh from the objects themselves at call time instead of trusting the
+  // bindings.
+  function sourceDirFor() {
+    var m = root.manifest || null
+    return m && m.__sourceDir ? String(m.__sourceDir) : ""
+  }
+
+  function activeBarFileFor() {
+    var m = root.shell && root.shell.activeBarManifest ? root.shell.activeBarManifest : null
+    if (!m || !m.__sourceDir || !m.entryPoints || !m.entryPoints.bar) return ""
+    return String(m.__sourceDir).replace(/\/+$/, "")
+      + "/" + String(m.entryPoints.bar)
+  }
+
+  function supportScriptFor(sourceDir) {
+    return String(sourceDir || "") + "/scripts/ensure-bar-support.sh"
+  }
 
   // ---- active bar ----
   readonly property string activeBarId: shell && shell.activeBarId
@@ -50,7 +78,6 @@ Item {
   property string supportState: "idle"
   property string supportDetail: ""
   property bool supportBusy: false
-  property bool reloadScheduled: false
 
   // ---- monitor info ----
   // Per-monitor physical resolution and refresh rate in Hz, keyed by output
@@ -147,33 +174,30 @@ Item {
   function ensureSupport() {
     // The host assigns `shell` before `manifest`, so the source dir may not be
     // resolvable yet; onManifestChanged re-runs this.
-    if (root.sourceDir === "") return
-    if (root.activeBarFile === "") {
-      root.supportState = "unsupported"
+    var srcDir = root.sourceDirFor()
+    var barFile = root.activeBarFileFor()
+    if (srcDir === "") return
+    if (barFile === "") {
+      // Only when the active bar itself has resolved can we call it
+      // unsupported; early in host wiring it may simply not be resolved yet.
+      if (root.shell && root.shell.activeBarId) root.supportState = "unsupported"
       return
     }
     if (root.supportBusy) return
     root.supportBusy = true
     root.supportState = "patching"
-    patchProc.command = [root.supportScript, root.activeBarFile]
+    patchProc.command = [root.supportScriptFor(srcDir), barFile]
     patchProc.running = true
   }
 
   function runAdminPatch() {
-    if (root.activeBarFile === "" || root.supportBusy) return
+    var srcDir = root.sourceDirFor()
+    var barFile = root.activeBarFileFor()
+    if (barFile === "" || root.supportBusy) return
     root.supportBusy = true
     root.supportState = "patching"
-    patchProc.command = ["pkexec", root.supportScript, root.activeBarFile]
+    patchProc.command = ["pkexec", root.supportScriptFor(srcDir), barFile]
     patchProc.running = true
-  }
-
-  function scheduleReload() {
-    if (root.reloadScheduled) return
-    root.reloadScheduled = true
-    Qt.callLater(function() {
-      root.reloadScheduled = false
-      Quickshell.reload(false)
-    })
   }
 
   Process {
@@ -187,7 +211,6 @@ Item {
         root.supportDetail = lines.length > 1 ? String(lines[1] || "").trim() : ""
         if (status === "patched") {
           root.supportState = "ok"
-          root.scheduleReload()
         } else if (status === "ok") {
           root.supportState = "ok"
         } else if (status === "needs-admin") {
@@ -229,12 +252,15 @@ Item {
   }
 
   onActiveBarFileChanged: {
-    barFileWatch.path = root.activeBarFile
+    barFileWatch.path = root.activeBarFileFor()
     root.ensureSupport()
     root.pushToBar()
   }
 
-  onManifestChanged: root.ensureSupport()
+  onManifestChanged: {
+    barFileWatch.path = root.activeBarFileFor()
+    root.ensureSupport()
+  }
 
   onShellChanged: {
     root.refreshFromConfig()
