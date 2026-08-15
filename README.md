@@ -43,8 +43,10 @@ manually. The shell hot-reloads plugins and the bar.
   The `KeyboardPanel` is a direct child of the widget root, which the Shibumi
   host relies on to anchor the popup to the visible bar edge and size it to the
   real content — don't wrap it in a `Loader` or inner `Item`.
-- Refresh rates come from `hyprctl monitors -j` (Hyprland), fetched once by the
-  service at startup.
+- Physical resolution and refresh rates come from `hyprctl monitors -j`
+  (Hyprland), fetched once by the service at startup. Quickshell screens only
+  report logical (scale-divided) pixels, so the physical width/height would
+  otherwise read wrong on scaled displays.
 
 ## Uninstall
 

@@ -77,21 +77,25 @@ Panel {
 
   // Plain JS objects so Repeater delegates get a working `modelData`
   // (Quickshell.screens is a C++ object model and does not provide it).
-  // The `service.refreshRates` property access keeps this re-computed when the
-  // service's hyprctl scan replaces the rate map.
+  // The `service.monitorInfo` property access keeps this re-computed when the
+  // service's hyprctl scan replaces the map. Width/height are the physical
+  // pixels from hyprctl (Quickshell's screen width/height are logical pixels
+  // divided by the monitor scale, e.g. 3840x2160 at scale 1.333 would report
+  // as 2880x1620), falling back to the logical size if the scan is pending.
   readonly property var displayModel: {
     var out = []
     var screens = Quickshell.screens
-    var rates = root.service && root.service.refreshRates
-      ? root.service.refreshRates : ({})
+    var info = root.service && root.service.monitorInfo
+      ? root.service.monitorInfo : ({})
     for (var i = 0; i < screens.length; i++) {
       var s = screens[i]
       var name = String(s.name || "")
+      var mi = info[name] || ({})
       out.push({
         name: name,
-        width: Number(s.width),
-        height: Number(s.height),
-        refreshRate: Number(rates[name]) || 0
+        width: Number(mi.width) || Number(s.width),
+        height: Number(mi.height) || Number(s.height),
+        refreshRate: Number(mi.refreshRate) || 0
       })
     }
     return out

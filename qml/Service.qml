@@ -53,12 +53,14 @@ Item {
   property bool reloadScheduled: false
 
   // ---- monitor info ----
-  // Per-monitor refresh rate in Hz, keyed by output name, from `hyprctl
-  // monitors -j`. Replaced wholesale (new object) so widgets' bindings that
-  // read this property are re-evaluated.
-  property var refreshRates: ({})
+  // Per-monitor physical resolution and refresh rate in Hz, keyed by output
+  // name, from `hyprctl monitors -j`. Quickshell screens report logical
+  // (scaled) pixels, so the physical width/height come from hyprctl instead.
+  // Replaced wholesale (new object) so widgets' bindings that read this
+  // property are re-evaluated.
+  property var monitorInfo: ({})
 
-  function fetchMonitorRates() {
+  function fetchMonitorInfo() {
     monitorProc.command = ["hyprctl", "monitors", "-j"]
     monitorProc.running = true
   }
@@ -246,21 +248,25 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var rates = ({})
+        var info = ({})
         try {
           var arr = JSON.parse(String(text || ""))
           if (Array.isArray(arr)) {
             for (var i = 0; i < arr.length; i++) {
               var m = arr[i]
               var name = String(m && m.name || "")
-              var hz = m ? Number(m.refreshRate) || 0 : 0
-              if (name !== "" && hz > 0) rates[name] = hz
+              if (name === "") continue
+              info[name] = {
+                width: m ? Number(m.width) || 0 : 0,
+                height: m ? Number(m.height) || 0 : 0,
+                refreshRate: m ? Number(m.refreshRate) || 0 : 0
+              }
             }
           }
         } catch (error) {
-          rates = ({})
+          info = ({})
         }
-        root.refreshRates = rates
+        root.monitorInfo = info
       }
     }
   }
@@ -272,6 +278,6 @@ Item {
 
   Component.onCompleted: {
     root.refreshFromConfig()
-    root.fetchMonitorRates()
+    root.fetchMonitorInfo()
   }
 }
