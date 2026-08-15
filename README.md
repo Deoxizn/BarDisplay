@@ -7,6 +7,10 @@ resolution and refresh rate. Turning a display off hides the bar there; the bar
 always stays visible on at least one display. Works with the Shibumi bar and
 the default Omarchy bar.
 
+<p align="center">
+  <img src="preview.png" alt="BarDisplay: monitor list popup with per-display toggles, resolution and refresh rate" />
+</p>
+
 ## Install
 
 Copy the plugin into the Omarchy plugin directory and add it to your bar:
