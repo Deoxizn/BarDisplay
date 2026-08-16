@@ -13,9 +13,11 @@ import Quickshell.Io
 // any previous support). User-owned bars live under ~/.config/omarchy/plugins,
 // so Omarchy's plugin watcher re-creates the bar automatically when the patch
 // writes its QML — the bar picks the support up with no shell reload needed.
-// (Quickshell.reload(false) is deliberately avoided: on quickshell-git it tears
-// down the IPC handler registry in a way that can use-after-free and crash the
-// shell.)
+// The built-in Omarchy bar (and any bar outside the watched dir) is never
+// hot-reloaded, so after patching one the service confirms the restart to the
+// user and runs `omarchy restart shell` (Omarchy's own restart, not
+// Quickshell.reload(false), which on quickshell-git tears down the IPC handler
+// registry in a way that can use-after-free and crash the shell).
 Item {
   id: root
 
@@ -75,9 +77,14 @@ Item {
   // display at once, so the toggle UI always stays reachable.
   property var enabledMonitors: []
   // idle | patching | ok | needs-admin | error | unsupported
+  // | restart-pending | restarting | restart-needed
   property string supportState: "idle"
   property string supportDetail: ""
   property bool supportBusy: false
+  // A system bar was patched; a shell restart is required (and scheduled)
+  // before the running bar honors bar.monitors. Stops reconcile from
+  // clobbering the restart states with a stale-bar verdict.
+  property bool restartPending: false
 
   // ---- monitor info ----
   // Per-monitor physical resolution and refresh rate in Hz, keyed by output
@@ -148,6 +155,82 @@ Item {
       shell.bar.barMonitors = root.enabledMonitors
   }
 
+  // ---- system-bar restart ----
+  // User-owned bars live under the watched plugin dir, so Omarchy's watcher
+  // re-creates them the moment the patch writes their QML. The built-in bar
+  // (and any bar outside that dir) is not watched: it only re-reads its QML
+  // when the whole shell restarts, so a freshly patched system bar stays
+  // stale in the running shell until then.
+  function isSystemBar() {
+    var file = root.activeBarFileFor()
+    if (file === "") return false
+    var dir = root.shell && root.shell.pluginRegistry
+      ? String(root.shell.pluginRegistry.pluginsDir || "") : ""
+    if (dir === "") return false
+    dir = dir.replace(/\/+$/, "") + "/"
+    return file.indexOf(dir) !== 0
+  }
+
+  // Ground truth for the running bar: the patch adds `barMonitors` to the
+  // bar root, so its presence means the live bar can honor per-display
+  // visibility without a restart.
+  function barHasSupport() {
+    return root.shell && root.shell.bar && "barMonitors" in root.shell.bar
+  }
+
+  // The patch is on disk ("ok") but the running bar is stale — the shell was
+  // never restarted after the file was written. Surface that and offer the
+  // manual restart. Deferred until the bar itself has resolved.
+  function reconcileStaleSystemBar() {
+    if (root.restartPending) return
+    if (!root.isSystemBar()) return
+    if (root.supportState !== "ok") return
+    if (!root.shell || !root.shell.bar) return
+    if (root.barHasSupport()) return
+    root.supportState = "restart-needed"
+    root.supportDetail = "The bar is patched, but the shell needs a restart to apply per-display toggling."
+  }
+
+  // Confirm-then-restart: show the pending state (the panel renders it with
+  // a Cancel option) for a few seconds, then restart via `omarchy restart
+  // shell` — Omarchy's sanctioned, crash-free restart (Quickshell.reload is
+  // deliberately avoided: it can use-after-free on quickshell-git).
+  function scheduleRestart() {
+    root.restartPending = true
+    restartTimer.restart()
+    // The pkexec dialog steals focus and closes the popup, so the pending
+    // state alone is invisible. Toast the countdown (notify-send lands on
+    // Omarchy's notification daemon) and tell the user where the Cancel is.
+    notifyProc.command = ["notify-send", "-a", "BarDisplay",
+      "Bar patched",
+      "The shell will restart in 8 seconds to apply per-display toggling. Open the BarDisplay widget to cancel."]
+    notifyProc.running = true
+  }
+
+  function restartShell() {
+    if (root.restartPending && root.supportState === "restarting") return
+    root.restartPending = true
+    root.supportState = "restarting"
+    root.supportDetail = "Restarting the shell to apply bar support\u2026"
+    var omarchyPath = root.shell && root.shell.omarchyPath
+      ? String(root.shell.omarchyPath) : ""
+    var omarchyBin = omarchyPath !== "" ? omarchyPath + "/bin/omarchy" : "omarchy"
+    restartProc.command = [
+      "bash", "-c",
+      "setsid \"$0\" restart shell >/dev/null 2>&1 &", omarchyBin
+    ]
+    restartProc.running = true
+    restartWatchdog.restart()
+  }
+
+  function cancelRestart() {
+    restartTimer.stop()
+    restartWatchdog.stop()
+    root.restartPending = false
+    root.supportState = "restart-needed"
+    root.supportDetail = "Restart cancelled. The bar patch takes effect after the next shell restart."
+  }
+
   // ----
   function setMonitorShown(name, shown) {
     var key = String(name || "")
@@ -174,6 +257,9 @@ Item {
   function ensureSupport() {
     // The host assigns `shell` before `manifest`, so the source dir may not be
     // resolvable yet; onManifestChanged re-runs this.
+    // While a shell restart is pending, skip re-checks (e.g. the file watcher
+    // firing when pkexec wrote the bar): the restart itself is what applies it.
+    if (root.restartPending) return
     var srcDir = root.sourceDirFor()
     var barFile = root.activeBarFileFor()
     if (srcDir === "") return
@@ -191,6 +277,7 @@ Item {
   }
 
   function runAdminPatch() {
+    if (root.restartPending) return
     var srcDir = root.sourceDirFor()
     var barFile = root.activeBarFileFor()
     if (barFile === "" || root.supportBusy) return
@@ -208,17 +295,39 @@ Item {
       onStreamFinished: {
         var lines = String(text || "").split("\n")
         var status = lines.length > 0 ? String(lines[0] || "").trim() : ""
-        root.supportDetail = lines.length > 1 ? String(lines[1] || "").trim() : ""
-        if (status === "patched") {
-          root.supportState = "ok"
-        } else if (status === "ok") {
-          root.supportState = "ok"
+        var detail = lines.length > 1 ? String(lines[1] || "").trim() : ""
+        if (status === "patched" || status === "ok") {
+          if (root.restartPending) {
+            // A restart is already confirmed/scheduled. A re-run of the patch
+            // check ("ok", e.g. from the file watcher after pkexec wrote the
+            // bar) must not downgrade the pending state.
+            if (root.supportState !== "restarting")
+              root.supportDetail = root.supportDetail || detail
+          } else if (root.isSystemBar() && !root.barHasSupport()) {
+            // A system bar cannot be hot-reloaded, so a fresh patch only
+            // takes effect after the shell restarts.
+            if (status === "patched") {
+              root.supportState = "restart-pending"
+              root.supportDetail = "Bar patched. The shell will restart in 8 seconds to apply per-display toggling."
+              root.scheduleRestart()
+            } else {
+              root.supportState = "ok"
+              root.supportDetail = ""
+              root.reconcileStaleSystemBar()
+            }
+          } else {
+            root.supportState = "ok"
+            root.supportDetail = ""
+          }
         } else if (status === "needs-admin") {
           root.supportState = "needs-admin"
+          root.supportDetail = detail
         } else if (status === "unsupported-bar") {
           root.supportState = "unsupported"
+          root.supportDetail = ""
         } else {
           root.supportState = "error"
+          root.supportDetail = detail
         }
       }
     }
@@ -241,6 +350,41 @@ Item {
     }
   }
 
+  // Pending restart countdown: gives the panel time to show the
+  // "the shell will restart" confirmation (and a Cancel) before it happens.
+  Timer {
+    id: restartTimer
+    interval: 8000
+    onTriggered: {
+      if (root.restartPending) root.restartShell()
+    }
+  }
+
+  // If the restart never takes effect we are still alive when this fires.
+  Timer {
+    id: restartWatchdog
+    interval: 10000
+    onTriggered: {
+      if (root.restartPending && root.supportState === "restarting") {
+        root.supportState = "restart-needed"
+        root.supportDetail = "The shell did not restart. Use the Restart button to try again."
+      }
+    }
+  }
+
+  Process {
+    id: restartProc
+    command: []
+    // The restart runs detached (setsid), so it survives the shell being
+    // killed and can launch the replacement. Nothing to read here.
+  }
+
+  Process {
+    id: notifyProc
+    command: []
+    // Fires the `notify-send` toast for the pending-restart countdown.
+  }
+
   // Self-healing: if the active bar file is replaced on disk (an update that
   // wiped the support patch), re-apply it.
   FileView {
@@ -255,6 +399,7 @@ Item {
     barFileWatch.path = root.activeBarFileFor()
     root.ensureSupport()
     root.pushToBar()
+    root.reconcileStaleSystemBar()
   }
 
   onManifestChanged: {
@@ -299,7 +444,10 @@ Item {
 
   Connections {
     target: shell
-    function onBarChanged() { root.pushToBar() }
+    function onBarChanged() {
+      root.pushToBar()
+      root.reconcileStaleSystemBar()
+    }
   }
 
   Component.onCompleted: {

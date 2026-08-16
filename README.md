@@ -39,6 +39,14 @@ manually. The shell hot-reloads plugins and the bar.
   it needs a one-time admin grant. The panel shows an **Apply** button that runs
   the same script through `pkexec`; the support re-applies itself after updates
   (the panel will ask again).
+- System bars are not watched by Omarchy's plugin watcher (that only hot-reloads
+  bars under `~/.config/omarchy/plugins`), so the running built-in bar cannot
+  read a freshly patched file. After a successful admin patch the panel
+  confirms it (a desktop toast plus an 8-second countdown with a **Cancel** in
+  the popup, in case pkexec's dialog stole the focus) and auto-restarts the
+  shell via `omarchy restart shell` (Omarchy's own crash-free restart — not
+  `Quickshell.reload`, which can crash quickshell-git). If the restart ever
+  fails the panel keeps a manual **Restart** button.
 - The widget and its popup live in one `Panel.qml` entry point (like Omabench).
   The `KeyboardPanel` is a direct child of the widget root, which the Shibumi
   host relies on to anchor the popup to the visible bar edge and size it to the
@@ -68,7 +76,9 @@ file (`Bar.qml.bardisplay.bak`).
   BarDisplay used to call `Quickshell.reload(false)` to make the patched bar
   pick up its support; that reload was what crashed, so it has been removed in
   favor of Omarchy's plugin watcher, which re-creates user-owned bars the moment
-  the patch writes their QML.
+  the patch writes their QML. For the built-in (system) bar — which the watcher
+  does not cover — the service instead restarts the shell with Omarchy's own
+  `omarchy restart shell` after a successful admin patch.
 - The bar patch is applied at shell startup from values computed fresh from the
   loaded manifests. Relying on QML bindings that read nested members of a
   `property var` (like `manifest.__sourceDir`) reads stale inside the host's

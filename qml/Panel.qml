@@ -102,18 +102,18 @@ Panel {
   }
 
   readonly property int screenCount: root.displayModel.length
-  readonly property bool supportMatters: root.service
-    && root.service.supportState !== "ok"
-    && root.service.supportState !== "unsupported"
-  readonly property bool showStatus: root.service
-    && root.service.supportState !== "ok"
 
   readonly property string statusText: {
     var st = root.service ? root.service.supportState : "idle"
     if (st === "needs-admin") return "The bar needs a one-time admin grant for per-display toggling."
+    if (st === "restart-pending") return "Bar patched. The shell will restart in 8 seconds to apply per-display toggling."
+    if (st === "restarting") return "Restarting the shell to apply bar support\u2026"
+    if (st === "restart-needed")
+      return root.service && root.service.supportDetail !== ""
+        ? root.service.supportDetail : "The bar is patched, but the shell needs a restart to apply it."
     if (st === "error") return "Could not update the bar. " + (root.service ? root.service.supportDetail : "")
     if (st === "unsupported") return "This bar cannot be toggled per display."
-    if (st === "patching") return "Checking bar support\u2026"
+    if (st === "patching" || st === "idle") return "Checking bar support\u2026"
     return "Bar support active"
   }
 
@@ -124,7 +124,7 @@ Panel {
 
   readonly property real estimatedHeight: root.headerHeight
     + root.screenCount * root.rowSpacing
-    + (root.showStatus ? root.statusHeight : Style.space(8))
+    + root.statusHeight
 
   implicitWidth: pill.implicitWidth
   implicitHeight: pill.implicitHeight
@@ -225,11 +225,10 @@ Panel {
           }
         }
 
-        // ---- Support status ----
+        // ---- Support status (always visible so hosts that measure once at mount count it) ----
         Item {
           width: parent.width
           height: root.statusHeight
-          visible: root.showStatus
 
           Rectangle {
             anchors.fill: parent
@@ -240,7 +239,7 @@ Panel {
 
           Text {
             anchors.left: parent.left
-            anchors.right: adminButton.visible ? adminButton.left : parent.right
+            anchors.right: statusButton.visible ? statusButton.left : parent.right
             anchors.leftMargin: Style.space(14)
             anchors.rightMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
@@ -252,17 +251,28 @@ Panel {
           }
 
           Button {
-            id: adminButton
-            visible: root.service && root.service.supportState === "needs-admin"
+            id: statusButton
+            visible: root.service != null
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
-            text: "Apply"
+            text: {
+              var st = root.service ? root.service.supportState : "idle"
+              if (st === "needs-admin") return "Apply"
+              if (st === "restart-pending") return "Cancel"
+              if (st === "restarting") return "Restarting\u2026"
+              return "Restart"
+            }
+            enabled: root.service && root.service.supportState !== "restarting"
             foreground: root.contentForeground
             accent: Color.accent
             fontFamily: root.contentFontFamily
             onClicked: {
-              if (root.service) root.service.runAdminPatch()
+              if (!root.service) return
+              var st = root.service.supportState
+              if (st === "needs-admin") root.service.runAdminPatch()
+              else if (st === "restart-pending") root.service.cancelRestart()
+              else root.service.restartShell()
             }
           }
         }
