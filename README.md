@@ -13,15 +13,24 @@ the default Omarchy bar.
 
 ## Install
 
-Copy the plugin into the Omarchy plugin directory and add it to your bar:
-
 ```sh
-cp -r ~/Work/BarDisplay ~/.config/omarchy/plugins/dev.deoxizn.bardisplay
-omarchy bar put dev.deoxizn.bardisplay --section right
+omarchy plugin add https://github.com/Deoxizn/BarDisplay.git --enable
 ```
 
-Or drop the widget into `bar.layout.right` in `~/.config/omarchy/shell.json`
-manually. The shell hot-reloads plugins and the bar.
+`omarchy plugin add` clones the repo, validates it, and enables the widget in
+the right section of the bar. Or drop the widget into `bar.layout.right` in
+`~/.config/omarchy/shell.json` manually. The shell hot-reloads plugins and the
+bar.
+
+### Updating
+
+```sh
+omarchy plugin update dev.deoxizn.bardisplay
+```
+
+`omarchy plugin update` fetches the latest version, shows the diff, and asks
+before applying it. Run it without an id to update every installed
+git-managed plugin.
 
 ## How it works
 
@@ -59,7 +68,7 @@ manually. The shell hot-reloads plugins and the bar.
 ## Uninstall
 
 ```sh
-rm -rf ~/.config/omarchy/plugins/dev.deoxizn.bardisplay
+omarchy plugin remove dev.deoxizn.bardisplay
 ```
 
 Remove the widget from `bar.layout` in `shell.json`, and if you want to revert
