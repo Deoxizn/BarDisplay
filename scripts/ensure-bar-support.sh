@@ -82,11 +82,9 @@ if flavour == "shibumi":
             "    barMonitors = configuredMonitors\n",
         ),
         (
-            "    if (JSON.stringify(layoutConfig) !== JSON.stringify(nextLayout))\n"
-            "      layoutConfig = nextLayout\n"
+            "    layoutConfig = nextLayout\n"
             "  }\n",
-            "    if (JSON.stringify(layoutConfig) !== JSON.stringify(nextLayout))\n"
-            "      layoutConfig = nextLayout\n"
+            "    layoutConfig = nextLayout\n"
             "  }\n\n"
             "  function showBarOnScreen(name) {\n"
             "    const names = Array.isArray(barMonitors) ? barMonitors : []\n"
