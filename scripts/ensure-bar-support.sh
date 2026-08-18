@@ -55,8 +55,53 @@ if [[ ! -w "$BAR_FILE" ]]; then
   exit 2
 fi
 
+# --- Symlink hardening (runs elevated via pkexec) ---
+# A crafted symlink at BAR_FILE or BACKUP can make the privileged cp -f or
+# Python write overwrite an arbitrary root-owned file.  Refuse to operate on
+# symlinks and validate that the resolved path is the expected stock bar.
+
+if [[ -L "$BAR_FILE" ]]; then
+  say "error"
+  say "Bar file is a symlink; refusing to patch (security)"
+  exit 1
+fi
+
+BAR_REAL="$(readlink -f "$BAR_FILE" 2>/dev/null || true)"
+if [[ -n "$BAR_REAL" && "$BAR_REAL" != "$BAR_FILE" ]]; then
+  say "error"
+  say "Bar file resolved to a different path; refusing (security)"
+  exit 1
+fi
+
+EXPECTED="/usr/share/omarchy/shell/plugins/bar/Bar.qml"
+if [[ "$BAR_FILE" != "$EXPECTED" ]]; then
+  say "error"
+  say "Refusing to patch unexpected path (security)"
+  exit 1
+fi
+
 BACKUP="${BAR_FILE}.bardisplay.bak"
+if [[ -L "$BACKUP" ]]; then
+  say "error"
+  say "Backup path is a symlink; refusing (security)"
+  exit 1
+fi
+if [[ -e "$BACKUP" && "$(dirname "$(readlink -f "$BACKUP" 2>/dev/null || echo "$BACKUP")")" != "$(dirname "$BAR_FILE")" ]]; then
+  say "error"
+  say "Backup path resolves outside bar directory; refusing (security)"
+  exit 1
+fi
+
 cp -f "$BAR_FILE" "$BACKUP"
+
+# Re-check: ensure the bar file is still a regular file (not swapped to a
+# symlink between our earlier check and the write below).
+if [[ -L "$BAR_FILE" ]]; then
+  cp -f "$BACKUP" "$BAR_FILE"
+  say "error"
+  say "Bar file became a symlink before write; restored from backup"
+  exit 1
+fi
 
 if ! python3 - "$BAR_FILE" "$BAR_FLAVOUR" <<'PY'
 import sys

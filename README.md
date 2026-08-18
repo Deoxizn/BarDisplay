@@ -75,6 +75,26 @@ Remove the widget from `bar.layout` in `shell.json`, and if you want to revert
 the bar itself, restore the backup the support script keeps next to the patched
 file (`Bar.qml.bardisplay.bak`).
 
+## Security
+
+BarDisplay never modifies system files on the normal code path:
+
+- **Shibumi bar**: has native `barMonitors` support; the plugin only writes
+  `bar.monitors` to `~/.config/omarchy/shell.json` (user-owned).
+- **Stock Omarchy bar**: lives at `/usr/share/omarchy/shell/plugins/bar/Bar.qml`
+  (root-owned). The one-time admin patch via `pkexec` is guarded by:
+  - **Symlink refusal** — the script refuses to operate on symlinks for both the
+    bar file and its backup.
+  - **Path allowlist** — the elevated script only accepts the exact stock bar
+    path (`/usr/share/omarchy/shell/plugins/bar/Bar.qml`); any other path is
+    rejected.
+  - **Backup validation** — the backup is verified to be a regular file in the
+    same directory as the bar file.
+  - **TOCTOU re-check** — the bar file is re-verified as a regular file immediately
+    before the write, after the backup is created.
+  - **Self-healing on update** — if the stock bar is updated and the patch is
+    wiped, the service detects it and re-applies (the user is asked again).
+
 ## Known issues
 
 - A one-time shell crash after the first install is a quickshell-git bug, not a
